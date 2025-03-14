@@ -20,11 +20,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const handleDirectorySelect = () => {
     console.log('Directory selection requested');
     
+    // Reset processing state to ensure clean state
+    setIsProcessing(false);
+    
     // Try to use the file input with webkitdirectory
     try {
-      const fileInput = document.getElementById('file-input');
+      const fileInput = document.getElementById('file-input') as HTMLInputElement;
       if (fileInput) {
         console.log('Using file input for selection');
+        // Reset the input value to ensure change event fires even if selecting the same directory
+        fileInput.value = '';
         fileInput.click();
         return;
       }
@@ -160,8 +165,37 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const handleImportResults = async (files: File[], categories: Record<string, string>) => {
     try {
       if (files.length > 0) {
-        // Show success message
-        alert(`找到 ${files.length} 个 Markdown 文件，正在导入...`);
+        // Create a progress element to show in the processing dialog
+        const progressElement = document.createElement('div');
+        progressElement.id = 'upload-progress';
+        progressElement.className = 'mt-4';
+        progressElement.innerHTML = `
+          <p class="mb-2">正在上传 ${files.length} 个文件...</p>
+          <div class="w-full bg-gray-200 rounded-full h-2.5">
+            <div class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+          </div>
+        `;
+        
+        // Add progress element to the processing dialog
+        setTimeout(() => {
+          const processingDialog = document.querySelector('.fixed.inset-0.bg-black\\/50 .bg-white');
+          if (processingDialog && !document.getElementById('upload-progress')) {
+            processingDialog.appendChild(progressElement);
+          }
+        }, 100);
+        
+        // Update progress function
+        const updateProgress = (percent: number) => {
+          const progressBar = document.querySelector('#upload-progress .bg-blue-600');
+          if (progressBar) {
+            (progressBar as HTMLElement).style.width = `${percent}%`;
+          }
+        };
+        
+        // Set up progress update listener
+        window.addEventListener('upload-progress', ((e: CustomEvent) => {
+          updateProgress(e.detail.percent);
+        }) as EventListener, { once: false });
         
         console.log(`Uploading ${files.length} files with ${Object.keys(categories).length} category mappings`);
         
@@ -171,22 +205,59 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         console.log('Upload result:', result);
         
         if (result.success) {
-          const categoriesCreated = result.stats?.categories_created 
-            ? result.stats.categories_created.join(', ') 
-            : result.stats?.categories || 0;
-            
-          alert(`上传成功！导入了 ${result.stats?.articles || 0} 篇文章，${categoriesCreated} 个分类。`);
-          handleImportComplete();
+          // Format categories created for display
+          let categoriesCreated: string | number = 0;
+          
+          if (result.stats?.categories_created && Array.isArray(result.stats.categories_created)) {
+            if (result.stats.categories_created.length <= 5) {
+              categoriesCreated = result.stats.categories_created.join(', ');
+            } else {
+              categoriesCreated = result.stats.categories_created.length;
+            }
+          } else {
+            categoriesCreated = result.stats?.categories || 0;
+          }
+          
+          // Show success message and keep it visible for a moment
+          updateProgress(100);
+          
+          // Replace progress bar with success message
+          const progressDiv = document.getElementById('upload-progress');
+          if (progressDiv) {
+            progressDiv.innerHTML = `
+              <p class="text-green-600 font-medium">上传成功！</p>
+              <p>导入了 ${result.stats?.articles || 0} 篇文章，${categoriesCreated} 个分类。</p>
+            `;
+          }
+          
+          // Wait a moment to show success message before refreshing
+          setTimeout(() => {
+            alert(`上传成功！导入了 ${result.stats?.articles || 0} 篇文章，${categoriesCreated} 个分类。`);
+            handleImportComplete();
+            setIsProcessing(false);
+          }, 1500);
         } else {
-          alert(`上传失败: ${result.message || '未知错误'}`);
+          // Show error message
+          const progressDiv = document.getElementById('upload-progress');
+          if (progressDiv) {
+            progressDiv.innerHTML = `
+              <p class="text-red-600 font-medium">上传失败</p>
+              <p>${result.message || '未知错误'}</p>
+            `;
+          }
+          
+          setTimeout(() => {
+            alert(`上传失败: ${result.message || '未知错误'}`);
+            setIsProcessing(false);
+          }, 1000);
         }
       } else {
         alert('未找到 Markdown 文件，请选择包含 .md 文件的目录。');
+        setIsProcessing(false);
       }
     } catch (err) {
       console.error('Error uploading files:', err);
       alert(`上传文件时发生错误: ${err instanceof Error ? err.message : '未知错误'}`);
-    } finally {
       setIsProcessing(false);
     }
   };
@@ -228,6 +299,15 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 <div className="bg-white rounded-lg p-6 max-w-md w-full">
                   <h2 className="text-xl font-bold mb-4">正在处理...</h2>
                   <p className="mb-4">正在处理目录，请稍候...</p>
+                  <div id="upload-progress" className="mt-4">
+                    {/* Progress bar will be inserted here dynamically */}
+                  </div>
+                  <button 
+                    onClick={() => setIsProcessing(false)}
+                    className="mt-4 px-4 py-2 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 text-sm"
+                  >
+                    取消
+                  </button>
                 </div>
               </div>
             )}
