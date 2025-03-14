@@ -79,18 +79,57 @@ export const uploadFiles = async (
 ): Promise<{ success: boolean; stats?: any; message?: string }> => {
   const formData = new FormData();
   
+  // Ensure we have files to upload
+  if (files.length === 0) {
+    return { success: false, message: "No files selected for upload" };
+  }
+  
+  // Log the files being uploaded for debugging
+  console.log(`Preparing to upload ${files.length} files`);
+  
   // Append each file to the form data with their relative paths
   files.forEach(file => {
-    // Use the webkitRelativePath as the filename to preserve directory structure
-    const blob = new Blob([file], { type: file.type });
-    formData.append('files', blob, file.webkitRelativePath);
+    try {
+      // Use the webkitRelativePath as the filename to preserve directory structure
+      // If webkitRelativePath is not available, use the filename
+      const relativePath = file.webkitRelativePath || file.name;
+      console.log(`Uploading file: ${relativePath}, type: ${file.type}, size: ${file.size} bytes`);
+      formData.append('files', file, relativePath);
+    } catch (err) {
+      console.error(`Error appending file ${file.name} to form data:`, err);
+    }
   });
+  
+  // Log the categories for debugging
+  console.log('Categories mapping:', categories);
   
   // Append categories as JSON string
   formData.append('categories', JSON.stringify(categories));
   
-  const response = await api.post('/api/upload-files', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  });
-  return response.data;
+  try {
+    const response = await api.post('/api/upload-files', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 30000 // Increase timeout to 30 seconds for larger uploads
+    });
+    return response.data;
+  } catch (error: any) {
+    console.error('Error uploading files:', error);
+    if (error.response) {
+      console.error('Response error data:', error.response.data);
+      return { 
+        success: false, 
+        message: `上传失败: ${error.response.data?.detail || error.response.statusText || '服务器错误'}`
+      };
+    }
+    if (error.code === 'ECONNABORTED') {
+      return {
+        success: false,
+        message: '上传超时，请尝试上传较少的文件或检查网络连接'
+      };
+    }
+    return { 
+      success: false, 
+      message: `上传失败: ${error.message || '未知错误'}`
+    };
+  }
 };

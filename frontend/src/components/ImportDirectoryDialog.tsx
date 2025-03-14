@@ -20,7 +20,21 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
   const [directoryPath, setDirectoryPath] = useState('');
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
+  
+  // Reset states when dialog opens
+  useEffect(() => {
+    if (isOpen) {
+      setError(null);
+      setSuccess(null);
+      setIsProcessing(false);
+      setSelectedFiles([]);
+      setCategories({});
+      setDirectoryPath('');
+    }
+  }, [isOpen]);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [categories, setCategories] = useState<Record<string, string>>({});
   const [browserSupport, setBrowserSupport] = useState({
@@ -53,10 +67,16 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
   }, []);
 
   const handleDirectorySelect = async () => {
+    // Reset states before starting new selection
+    setError(null);
+    setSuccess(null);
+    setIsProcessing(true);
+    
     try {
       // Use modern File System Access API if available
       if (browserSupport.hasFileSystemAccessAPI) {
         try {
+          console.log('Attempting to open directory picker...');
           // @ts-ignore - TypeScript doesn't recognize showDirectoryPicker yet
           const directoryHandle = await window.showDirectoryPicker({
             id: 'markdown-cms-directory',
@@ -85,7 +105,7 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
           
           // Get file count to provide better feedback
           let fileCount = 0;
-          let mdFiles = [];
+          let mdFiles: Array<{name: string, path: string}> = [];
           let categoriesSet = new Set<string>();
           
           // Recursive function to process directories
@@ -122,23 +142,65 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
           
           // Show success feedback
           if (fileCount > 0) {
-            setError(`找到 ${fileCount} 个 Markdown 文件在 "${path}" 目录中的 ${categoriesSet.size} 个分类下。点击"导入"按钮继续。`);
+            setSuccess(`找到 ${fileCount} 个 Markdown 文件在 "${path}" 目录中的 ${categoriesSet.size} 个分类下。点击"导入"按钮继续。`);
+            setError(null);
           } else {
-            setError(`已选择 "${path}" 目录。未找到 Markdown 文件，您仍可以尝试导入。`);
+            setSuccess(`已选择 "${path}" 目录。未找到 Markdown 文件，您仍可以尝试导入。`);
+            setError(null);
           }
           
-          // Automatically trigger import if files were found
-          if (fileCount > 0 && path) {
-            // Wait a moment to let the user see what was found
-            setTimeout(() => {
-              handleImport();
-            }, 1500);
-          }
+          // Store files for upload - convert the file-like objects to actual File objects
+          const actualFiles: File[] = [];
+          
+          // Create categories mapping
+          const categoriesMap: Record<string, string> = {};
+          
+          // We'll need to read the files manually since we can't directly get File objects
+          const readFiles = async () => {
+            for (const fileInfo of mdFiles) {
+              try {
+                // Get the file handle
+                const fileHandle = await directoryHandle.getFileHandle(fileInfo.path);
+                // Get the file
+                const file = await fileHandle.getFile();
+                // Store the file with its path
+                actualFiles.push(file);
+                
+                // Extract category from path
+                const pathParts = fileInfo.path.split('/');
+                let category = 'default';
+                if (pathParts.length > 1) {
+                  category = pathParts[0]; // First part of path is category
+                }
+                
+                // Use the full path as the key
+                categoriesMap[fileInfo.path] = category;
+              } catch (err) {
+                console.error(`Error reading file ${fileInfo.path}:`, err);
+              }
+            }
+            
+            // Set the files and categories
+            setSelectedFiles(actualFiles);
+            setCategories(categoriesMap);
+            
+            console.log(`Prepared ${actualFiles.length} files for upload with ${categoriesSet.size} categories`);
+          };
+          
+          // Set processing state to false when done
+          setIsProcessing(false);
+          
+          // Read the files
+          await readFiles();
+          
+          // Don't automatically trigger import - let the user click the button
+          // This gives them time to see what was found and decide whether to proceed
         } catch (err) {
           // User cancelled the picker or permission denied
           if (err instanceof Error && err.name === 'AbortError') {
             console.log('User cancelled the directory picker');
-            // Don't show error for user cancellation
+            // Provide clear feedback for user cancellation
+            setError('您取消了目录选择。请重新点击"选择文章目录"按钮。');
           } else {
             console.error('Error with File System Access API:', err);
             setError('选择目录失败。请重试或手动输入路径。');
@@ -206,18 +268,21 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
         
         // Show success feedback
         if (markdownFiles.length > 0) {
-          setError(`找到 ${markdownFiles.length} 个 Markdown 文件在 "${path}" 目录中的 ${categoriesSet.size} 个分类下。点击"导入"按钮继续。`);
+          setSuccess(`找到 ${markdownFiles.length} 个 Markdown 文件在 "${path}" 目录中的 ${categoriesSet.size} 个分类下。点击"导入"按钮继续。`);
+          setError(null);
           
-          // Automatically trigger import if files were found
-          setTimeout(() => {
-            handleImport();
-          }, 1500);
+          // Don't automatically trigger import - let the user click the button
+          // This gives them time to see what was found and decide whether to proceed
         } else {
-          setError(`已选择 "${path}" 目录。未找到 Markdown 文件，您仍可以尝试导入。`);
+          setSuccess(`已选择 "${path}" 目录。未找到 Markdown 文件，您仍可以尝试导入。`);
+          setError(null);
         }
       } catch (err) {
         console.error('Error processing selected files:', err);
         setError('处理选择的文件失败。请重试。');
+        // Set processing state to false when done
+        setIsProcessing(false);
+
       }
     } else {
       // User cancelled the selection
@@ -228,11 +293,13 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
   const handleImport = async () => {
     if (selectedFiles.length === 0) {
       setError('请选择包含Markdown文件的目录');
+      setSuccess(null);
       return;
     }
 
     setIsImporting(true);
     setError(null);
+    setSuccess(null);
 
     try {
       console.log(`Uploading ${selectedFiles.length} files with categories:`, categories);
@@ -240,8 +307,12 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
       
       if (result.success) {
         console.log(`Upload successful: ${JSON.stringify(result.stats)}`);
-        setIsOpen(false);
-        onImportComplete();
+        setSuccess(`上传成功！导入了 ${result.stats?.articles || 0} 篇文章，${result.stats?.categories || 0} 个分类。`);
+        // Keep dialog open for a moment to show success message
+        setTimeout(() => {
+          setIsOpen(false);
+          onImportComplete();
+        }, 1500);
       } else {
         console.error(`Upload failed: ${result.message}`);
         setError(result.message || '上传文件失败');
@@ -260,7 +331,7 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogTrigger asChild>
+      <DialogTrigger asChild onClick={() => setIsOpen(true)}>
         <Button variant="outline" className="gap-2">
           <Folder className="h-4 w-4" />
           导入文章
@@ -307,7 +378,9 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
                 </div>
               )}
             </div>
-            {error && <p className={`text-sm ${error.includes('找到') ? 'text-green-600' : 'text-red-500'}`}>{error}</p>}
+            {success && <p className="text-sm text-green-600">{success}</p>}
+            {error && <p className="text-sm text-red-500">{error}</p>}
+            {isProcessing && <p className="text-sm text-blue-500">正在处理目录，请稍候...</p>}
           </div>
         </div>
         <DialogFooter>

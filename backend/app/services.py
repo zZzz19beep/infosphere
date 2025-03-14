@@ -316,6 +316,7 @@ class ContentService:
         try:
             print(f"Attempting to import {len(files)} uploaded files")
             print(f"Content directory: {self.content_dir}")
+            print(f"Categories mapping: {categories}")
             
             # Ensure content directory exists
             if not self.content_dir.exists():
@@ -327,7 +328,8 @@ class ContentService:
                     return {"success": False, "message": f"无法创建内容目录: {str(e)}"}
             
             # Track import statistics
-            stats = {"categories": 0, "articles": 0}
+            stats = {"categories": 0, "articles": 0, "categories_created": []}
+            created_categories = set()
             
             # Process each uploaded file
             for file in files:
@@ -339,20 +341,31 @@ class ContentService:
                         continue
                         
                     category = categories[file_path]
+                    print(f"Processing file: {file_path}, category: {category}")
                     
-                    # Create category directory if it doesn't exist
-                    category_dir = self.content_dir / category
-                    if not category_dir.exists():
-                        print(f"Creating category directory: {category_dir}")
-                        category_dir.mkdir(parents=True, exist_ok=True)
-                        stats["categories"] += 1
+                    # Handle nested category paths (e.g., "MainCategory/SubCategory")
+                    category_parts = category.split('/')
+                    current_path = self.content_dir
+                    
+                    # Create each level of the category hierarchy
+                    for i, part in enumerate(category_parts):
+                        current_path = current_path / part
+                        if not current_path.exists():
+                            print(f"Creating category directory: {current_path}")
+                            current_path.mkdir(parents=True, exist_ok=True)
+                            
+                            # Only count top-level categories in the stats
+                            if i == 0 and part not in created_categories:
+                                stats["categories"] += 1
+                                created_categories.add(part)
+                                stats["categories_created"].append(part)
                     
                     # Get filename from path
                     filename = os.path.basename(file_path)
                     
                     # Save file content
                     content = await file.read()
-                    target_file = category_dir / filename
+                    target_file = current_path / filename
                     
                     print(f"Saving file: {filename} to {target_file}")
                     with open(target_file, "wb") as f:
@@ -360,7 +373,9 @@ class ContentService:
                     
                     stats["articles"] += 1
                 except Exception as e:
+                    error_details = traceback.format_exc()
                     print(f"Error processing file {file.filename}: {str(e)}")
+                    print(f"Error details: {error_details}")
             
             if stats["articles"] == 0:
                 return {"success": False, "message": "未能导入任何文件"}
