@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Folder, Upload } from 'lucide-react';
-import { importDirectory } from '../api';
+import { uploadFiles } from '../api';
 import {
   Dialog,
   DialogContent,
@@ -11,7 +11,6 @@ import {
   DialogTrigger,
 } from '../components/ui/dialog';
 import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
 
 interface ImportDirectoryDialogProps {
   onImportComplete: () => void;
@@ -22,6 +21,8 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [categories, setCategories] = useState<Record<string, string>>({});
   const [browserSupport, setBrowserSupport] = useState({
     hasFileSystemAccessAPI: false,
     hasWebkitDirectory: false
@@ -159,6 +160,27 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
         setError(null);
         console.log(`Selected directory: ${path} with ${files.length} total files, ${markdownFiles.length} markdown files`);
         
+        // Store files for upload
+        setSelectedFiles(markdownFiles);
+        
+        // Create categories mapping
+        const categoriesMap: Record<string, string> = {};
+        markdownFiles.forEach(file => {
+          // Extract category from relative path
+          const relativePath = file.webkitRelativePath;
+          const pathParts = relativePath.split('/');
+          
+          // If file is in a subdirectory, use that as category
+          let category = 'default';
+          if (pathParts.length > 2) {
+            category = pathParts[1]; // First subdirectory after root
+          }
+          
+          categoriesMap[file.name] = category;
+        });
+        
+        setCategories(categoriesMap);
+        
         // Show success feedback
         if (markdownFiles.length > 0) {
           setError(`找到 ${markdownFiles.length} 个 Markdown 文件在 "${path}" 目录中。点击"导入"按钮继续。`);
@@ -181,8 +203,8 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
   };
 
   const handleImport = async () => {
-    if (!directoryPath.trim()) {
-      setError('请选择一个目录或输入目录路径');
+    if (selectedFiles.length === 0) {
+      setError('请选择包含Markdown文件的目录');
       return;
     }
 
@@ -190,23 +212,23 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
     setError(null);
 
     try {
-      console.log(`Importing directory: ${directoryPath}`);
-      const result = await importDirectory(directoryPath);
+      console.log(`Uploading ${selectedFiles.length} files with categories:`, categories);
+      const result = await uploadFiles(selectedFiles, categories);
       
       if (result.success) {
-        console.log(`Import successful: ${JSON.stringify(result.stats)}`);
+        console.log(`Upload successful: ${JSON.stringify(result.stats)}`);
         setIsOpen(false);
         onImportComplete();
       } else {
-        console.error(`Import failed: ${result.message}`);
-        setError(result.message || '导入目录失败');
+        console.error(`Upload failed: ${result.message}`);
+        setError(result.message || '上传文件失败');
       }
     } catch (err) {
-      console.error('Error importing directory:', err);
+      console.error('Error uploading files:', err);
       if (err instanceof Error) {
-        setError(`导入目录时发生错误: ${err.message}`);
+        setError(`上传文件时发生错误: ${err.message}`);
       } else {
-        setError('导入目录时发生未知错误');
+        setError('上传文件时发生未知错误');
       }
     } finally {
       setIsImporting(false);
@@ -230,24 +252,15 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
         </DialogHeader>
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <label htmlFor="directory" className="text-sm font-medium">
-              目录路径
-            </label>
-            <div className="flex gap-2">
-              <Input
-                id="directory"
-                placeholder="/path/to/articles"
-                value={directoryPath}
-                onChange={(e) => setDirectoryPath(e.target.value)}
-                className="flex-1"
-              />
+            <div className="flex flex-col gap-4">
               <Button 
                 type="button" 
                 variant="outline" 
                 onClick={handleDirectorySelect}
-                className="whitespace-nowrap"
+                className="flex gap-2 items-center justify-center py-8"
               >
-                选择目录
+                <Folder className="h-6 w-6" />
+                <span className="text-lg">选择文章目录</span>
               </Button>
               <input
                 type="file"
@@ -260,6 +273,16 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
                 onChange={handleFileInputChange}
                 multiple
               />
+              {directoryPath && (
+                <div className="p-4 border rounded-md bg-gray-50">
+                  <p className="font-medium">已选择目录: {directoryPath}</p>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {selectedFiles.length > 0 
+                      ? `找到 ${selectedFiles.length} 个 Markdown 文件` 
+                      : '未找到 Markdown 文件'}
+                  </p>
+                </div>
+              )}
             </div>
             {error && <p className={`text-sm ${error.includes('找到') ? 'text-green-600' : 'text-red-500'}`}>{error}</p>}
           </div>

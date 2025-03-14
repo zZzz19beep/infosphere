@@ -32,3 +32,9 @@ class CommentCreate(BaseModel):
 class DirectoryImport(BaseModel):
     """Model for importing articles from a directory"""
     directory_path: str
+
+class FileUpload(BaseModel):
+    """Model for file upload information"""
+    filename: str
+    content: str
+    category: str

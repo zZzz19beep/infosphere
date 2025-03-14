@@ -307,3 +307,66 @@ class ContentService:
             error_details = traceback.format_exc()
             print(f"Import error: {error_details}")
             return {"success": False, "message": f"导入目录时发生错误: {str(e)}"}
+            
+    async def import_from_uploads(self, files: List, categories: Dict[str, str]) -> Dict:
+        """Import articles from uploaded files"""
+        import os
+        import traceback
+        
+        try:
+            print(f"Attempting to import {len(files)} uploaded files")
+            print(f"Content directory: {self.content_dir}")
+            
+            # Ensure content directory exists
+            if not self.content_dir.exists():
+                try:
+                    print(f"Creating content directory: {self.content_dir}")
+                    self.content_dir.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    print(f"Error creating content directory: {str(e)}")
+                    return {"success": False, "message": f"无法创建内容目录: {str(e)}"}
+            
+            # Track import statistics
+            stats = {"categories": 0, "articles": 0}
+            
+            # Process each uploaded file
+            for file in files:
+                try:
+                    # Get file path and category from the categories dictionary
+                    file_path = file.filename
+                    if file_path not in categories:
+                        print(f"No category found for file: {file_path}")
+                        continue
+                        
+                    category = categories[file_path]
+                    
+                    # Create category directory if it doesn't exist
+                    category_dir = self.content_dir / category
+                    if not category_dir.exists():
+                        print(f"Creating category directory: {category_dir}")
+                        category_dir.mkdir(parents=True, exist_ok=True)
+                        stats["categories"] += 1
+                    
+                    # Get filename from path
+                    filename = os.path.basename(file_path)
+                    
+                    # Save file content
+                    content = await file.read()
+                    target_file = category_dir / filename
+                    
+                    print(f"Saving file: {filename} to {target_file}")
+                    with open(target_file, "wb") as f:
+                        f.write(content)
+                    
+                    stats["articles"] += 1
+                except Exception as e:
+                    print(f"Error processing file {file.filename}: {str(e)}")
+            
+            if stats["articles"] == 0:
+                return {"success": False, "message": "未能导入任何文件"}
+                
+            return {"success": True, "stats": stats}
+        except Exception as e:
+            error_details = traceback.format_exc()
+            print(f"Import error: {error_details}")
+            return {"success": False, "message": f"导入文件时发生错误: {str(e)}"}

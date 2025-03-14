@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
+from typing import List, Dict
+import json
 
 from app.services import ContentService
-from app.models import Category, ArticleSummary, Article, Comment, CommentCreate, DirectoryImport
+from app.models import Category, ArticleSummary, Article, Comment, CommentCreate, DirectoryImport, FileUpload
 
 app = FastAPI(title="Markdown CMS API")
 
@@ -115,6 +116,26 @@ async def import_directory(
             raise HTTPException(status_code=400, detail=result["message"])
         return result
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/upload-files", status_code=201)
+async def upload_files(
+    files: List[UploadFile] = File(...),
+    categories: str = Form(...),
+    content_service: ContentService = Depends(get_content_service)
+):
+    """Upload files and import them as articles"""
+    try:
+        # Parse categories JSON string
+        categories_dict = json.loads(categories)
+        result = await content_service.import_from_uploads(files, categories_dict)
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["message"])
+        return result
+    except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Upload error: {error_details}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/debug/config", include_in_schema=False)
