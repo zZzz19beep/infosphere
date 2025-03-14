@@ -57,18 +57,40 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
       if (browserSupport.hasFileSystemAccessAPI) {
         try {
           // @ts-ignore - TypeScript doesn't recognize showDirectoryPicker yet
-          const directoryHandle = await window.showDirectoryPicker();
+          const directoryHandle = await window.showDirectoryPicker({
+            id: 'markdown-cms-directory',
+            mode: 'read',
+            startIn: 'documents'
+          });
           
-          // Get the directory name
-          const path = directoryHandle.name;
+          // Get the directory path - try to get a more complete path if possible
+          let path = '';
+          try {
+            // Try to get a more complete path if possible
+            // @ts-ignore - TypeScript doesn't recognize FileSystemHandle properties
+            path = directoryHandle.name;
+            
+            // Some browsers might support getting a better path
+            // @ts-ignore - Not standard but some browsers support it
+            if (directoryHandle.fullPath) {
+              // @ts-ignore
+              path = directoryHandle.fullPath;
+            }
+          } catch (pathErr) {
+            console.warn('Could not get full path:', pathErr);
+            // @ts-ignore
+            path = directoryHandle.name;
+          }
           
           // Get file count to provide better feedback
           let fileCount = 0;
+          let mdFiles = [];
           try {
             // @ts-ignore - TypeScript doesn't recognize directory handle methods
             for await (const entry of directoryHandle.values()) {
               if (entry.kind === 'file' && entry.name.endsWith('.md')) {
                 fileCount++;
+                mdFiles.push(entry.name);
               }
             }
           } catch (countErr) {
@@ -81,9 +103,17 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
           
           // Show success feedback
           if (fileCount > 0) {
-            setError(`Found ${fileCount} markdown files in "${path}". Click "导入" to import.`);
+            setError(`找到 ${fileCount} 个 Markdown 文件在 "${path}" 目录中。点击"导入"按钮继续。`);
           } else {
-            setError(`Selected "${path}". No markdown files found. You can still try to import.`);
+            setError(`已选择 "${path}" 目录。未找到 Markdown 文件，您仍可以尝试导入。`);
+          }
+          
+          // Automatically trigger import if files were found
+          if (fileCount > 0 && path) {
+            // Wait a moment to let the user see what was found
+            setTimeout(() => {
+              handleImport();
+            }, 1500);
           }
         } catch (err) {
           // User cancelled the picker or permission denied
@@ -92,7 +122,7 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
             // Don't show error for user cancellation
           } else {
             console.error('Error with File System Access API:', err);
-            setError('Failed to select directory. Please try again or enter the path manually.');
+            setError('选择目录失败。请重试或手动输入路径。');
             
             // If File System API failed, try fallback to webkitdirectory
             if (browserSupport.hasWebkitDirectory && fileInputRef.current) {
@@ -107,11 +137,11 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
         fileInputRef.current.click();
       } else {
         // No directory selection APIs available
-        setError('Your browser does not support directory selection. Please enter the path manually.');
+        setError('您的浏览器不支持目录选择功能。请手动输入路径。');
       }
     } catch (err) {
       console.error('Error selecting directory:', err);
-      setError('Failed to select directory. Please try again or enter the path manually.');
+      setError('选择目录失败。请重试或手动输入路径。');
     }
   };
 
@@ -131,13 +161,18 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
         
         // Show success feedback
         if (markdownFiles.length > 0) {
-          setError(`Found ${markdownFiles.length} markdown files in "${path}". Click "导入" to import.`);
+          setError(`找到 ${markdownFiles.length} 个 Markdown 文件在 "${path}" 目录中。点击"导入"按钮继续。`);
+          
+          // Automatically trigger import if files were found
+          setTimeout(() => {
+            handleImport();
+          }, 1500);
         } else {
-          setError(`Selected "${path}". No markdown files found. You can still try to import.`);
+          setError(`已选择 "${path}" 目录。未找到 Markdown 文件，您仍可以尝试导入。`);
         }
       } catch (err) {
         console.error('Error processing selected files:', err);
-        setError('Failed to process selected files. Please try again.');
+        setError('处理选择的文件失败。请重试。');
       }
     } else {
       // User cancelled the selection
@@ -147,7 +182,7 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
 
   const handleImport = async () => {
     if (!directoryPath.trim()) {
-      setError('Please select a directory or enter a directory path');
+      setError('请选择一个目录或输入目录路径');
       return;
     }
 
@@ -161,11 +196,11 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
         setIsOpen(false);
         onImportComplete();
       } else {
-        setError(result.message || 'Failed to import directory');
+        setError(result.message || '导入目录失败');
       }
     } catch (err) {
       console.error('Error importing directory:', err);
-      setError('An error occurred while importing the directory');
+      setError('导入目录时发生错误');
     } finally {
       setIsImporting(false);
     }
@@ -203,8 +238,9 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
                 type="button" 
                 variant="outline" 
                 onClick={handleDirectorySelect}
+                className="whitespace-nowrap"
               >
-                浏览...
+                选择目录
               </Button>
               <input
                 type="file"
@@ -218,7 +254,7 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
                 multiple
               />
             </div>
-            {error && <p className={`text-sm ${error.includes('Found') ? 'text-green-600' : 'text-red-500'}`}>{error}</p>}
+            {error && <p className={`text-sm ${error.includes('找到') ? 'text-green-600' : 'text-red-500'}`}>{error}</p>}
           </div>
         </div>
         <DialogFooter>
