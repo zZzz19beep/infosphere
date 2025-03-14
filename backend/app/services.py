@@ -12,13 +12,33 @@ from app.config import settings
 
 class ContentService:
     def __init__(self, content_dir: str = settings.CONTENT_DIR):
-        self.content_dir = Path(content_dir)
-        self.comments_file = Path(settings.COMMENTS_FILE)
-        self.summaries_file = Path(settings.SUMMARIES_FILE)
-        
-        # Create content directory if it doesn't exist
-        if not self.content_dir.exists():
+        # Set content directory
+        try:
+            self.content_dir = Path(content_dir)
+            # Try to create content directory if it doesn't exist
+            if not self.content_dir.exists():
+                self.content_dir.mkdir(parents=True, exist_ok=True)
+        except (PermissionError, OSError) as e:
+            print(f"Cannot access or create {content_dir}: {str(e)}")
+            print("Using local content directory instead")
+            self.content_dir = Path("./content")
             self.content_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Set comments and summaries files
+        try:
+            self.comments_file = Path(settings.COMMENTS_FILE)
+            self.summaries_file = Path(settings.SUMMARIES_FILE)
+            
+            # Check if we can access the parent directories
+            if not self.comments_file.parent.exists() or not os.access(self.comments_file.parent, os.W_OK):
+                raise PermissionError(f"Cannot access {self.comments_file.parent}")
+            if not self.summaries_file.parent.exists() or not os.access(self.summaries_file.parent, os.W_OK):
+                raise PermissionError(f"Cannot access {self.summaries_file.parent}")
+        except (PermissionError, OSError) as e:
+            print(f"Cannot access data files: {str(e)}")
+            print("Using local data files instead")
+            self.comments_file = Path("./content/comments.json")
+            self.summaries_file = Path("./content/summaries.json")
         
         # Create data files if they don't exist
         self._ensure_data_files()
@@ -159,6 +179,7 @@ class ContentService:
         # Split the article_id into category path and filename
         parts = article_id.rsplit('/', 1)
         if len(parts) != 2:
+            print(f"Invalid article_id format: {article_id}")
             return None
         
         category_id, filename = parts
@@ -166,16 +187,29 @@ class ContentService:
         # Build the file path by joining the content directory with the category path and filename
         file_path = self.content_dir / category_id / filename
         
+        print(f"Looking for article at path: {file_path}")
+        
         if not file_path.exists() or not file_path.is_file():
-            return None
+            print(f"Article file not found: {file_path}")
+            # Try alternative path formats
+            alt_path = self.content_dir / article_id
+            if alt_path.exists() and alt_path.is_file():
+                print(f"Found article at alternative path: {alt_path}")
+                file_path = alt_path
+            else:
+                return None
         
         # Load comments and summaries
         comments = self._load_comments()
         summaries = self._load_summaries()
         
         # Read the file content
-        with open(file_path, 'r') as f:
-            content = f.read()
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except Exception as e:
+            print(f"Error reading article file: {str(e)}")
+            return None
             
         # Extract title from the first line
         title = content.splitlines()[0].lstrip('#').strip() if content else filename
@@ -379,7 +413,7 @@ class ContentService:
                     return {"success": False, "message": f"无法创建内容目录: {str(e)}"}
             
             # Track import statistics
-            stats = {"categories": 0, "articles": 0, "categories_created": [], "errors": 0}
+            stats = {"categories": 0, "articles": 0, "categories_created": [], "errors": 0, "summaries_generated": 0}
             created_categories = set()
             
             # Configuration for batch processing
@@ -431,10 +465,37 @@ class ContentService:
                         with open(target_file, "wb") as f:
                             f.write(content)
                         
-                        return {
-                            "success": True, 
-                            "created_categories": created_cats
-                        }
+                        # Generate article summary
+                        try:
+                            # Construct article_id
+                            article_id = f"{category}/{filename}"
+                            
+                            # Read the content for summarization
+                            content_str = content.decode('utf-8')
+                            
+                            # Generate summary using AI service
+                            from app.ai_service import AIService
+                            ai_service = AIService()
+                            summary = ai_service.summarize_article(content_str)
+                            
+                            # Save the summary
+                            self.save_summary(article_id, summary)
+                            
+                            print(f"Generated and saved summary for article: {article_id}")
+                            
+                            return {
+                                "success": True, 
+                                "created_categories": created_cats,
+                                "summary_generated": True
+                            }
+                        except Exception as summary_err:
+                            print(f"Error generating summary for {filename}: {str(summary_err)}")
+                            # Continue even if summary generation fails
+                            return {
+                                "success": True, 
+                                "created_categories": created_cats,
+                                "summary_generated": False
+                            }
                     except Exception as e:
                         error_details = traceback.format_exc()
                         print(f"Error processing file {file.filename}: {str(e)}")
@@ -479,6 +540,10 @@ class ContentService:
                             stats["categories"] += 1
                             created_categories.add(category)
                             stats["categories_created"].append(category)
+                    
+                    # Track summary generation
+                    if result.get("summary_generated", False):
+                        stats["summaries_generated"] += 1
                 else:
                     stats["errors"] += 1
             
@@ -492,6 +557,7 @@ class ContentService:
             elapsed_time = time.time() - start_time
             print(f"Import completed in {elapsed_time:.2f} seconds")
             print(f"Imported {stats['articles']} articles in {stats['categories']} categories")
+            print(f"Generated {stats['summaries_generated']} summaries")
             print(f"Encountered {stats['errors']} errors")
                 
             return {"success": True, "stats": stats}
