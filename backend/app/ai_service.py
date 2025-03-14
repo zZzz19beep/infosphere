@@ -2,42 +2,118 @@ import os
 from typing import Optional
 import requests
 import json
+import traceback
 from app.config import settings
 
 class AIService:
     """Service for AI-powered article summarization"""
     
     def __init__(self, api_key: Optional[str] = None):
-        # Use sankuai API by default, fallback to OpenAI if specified
-        self.use_sankuai = True
+        # Use DeepSeek API by default
+        self.use_deepseek = True
         self.api_key = api_key
         
-        # Sankuai API settings
+        # DeepSeek API settings
+        self.deepseek_api_url = settings.DEEPSEEK_API_URL
+        self.deepseek_api_token = settings.DEEPSEEK_API_TOKEN
+        self.deepseek_api_model = settings.DEEPSEEK_API_MODEL
+        
+        # Legacy API settings (for backward compatibility)
         self.sankuai_api_url = settings.SANKUAI_API_URL
         self.sankuai_api_token = settings.SANKUAI_API_TOKEN
         self.sankuai_api_model = settings.SANKUAI_API_MODEL
-        
-        # OpenAI API settings (for backward compatibility)
         self.openai_api_url = "https://api.openai.com/v1/chat/completions"
     
     def summarize_article(self, content: str) -> str:
         """
         Summarize an article using AI API
         """
-        # Use sankuai API by default
-        if self.use_sankuai:
-            return self._summarize_with_sankuai(content)
+        try:
+            # Use DeepSeek API by default
+            if self.use_deepseek:
+                summary = self._summarize_with_deepseek(content)
+                if summary:
+                    return summary
+                
+            # Fallback to Sankuai API if DeepSeek fails
+            summary = self._summarize_with_sankuai(content)
+            if summary:
+                return summary
+            
+            # Fallback to OpenAI if specified and other APIs fail
+            if self.api_key:
+                summary = self._summarize_with_openai(content)
+                if summary:
+                    return summary
+        except Exception as e:
+            print(f"Error in summarize_article: {str(e)}")
+            traceback.print_exc()
         
-        # Fallback to OpenAI if specified
-        if self.api_key:
-            return self._summarize_with_openai(content)
-        
-        # Use simple summary if no API is available
+        # Use simple summary if all APIs fail
         return self._simple_summary(content)
+    
+    def _summarize_with_deepseek(self, content: str) -> str:
+        """
+        Summarize an article using DeepSeek API
+        """
+        try:
+            print("Attempting to summarize with DeepSeek API...")
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.deepseek_api_token}"
+            }
+            
+            # Prepare the prompt
+            prompt = f"""
+            请用2-3句话总结以下markdown文章，重点关注主要内容和关键点：
+            
+            {content}
+            """
+            
+            data = {
+                "model": self.deepseek_api_model,
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant that summarizes articles concisely."},
+                    {"role": "user", "content": prompt}
+                ],
+                "stream": False
+            }
+            
+            try:
+                response = requests.post(
+                    self.deepseek_api_url,
+                    headers=headers,
+                    json=data,  # Use json parameter instead of data with json.dumps
+                    timeout=30
+                )
+                
+                print(f"DeepSeek API response status: {response.status_code}")
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    if 'choices' in result and len(result['choices']) > 0:
+                        summary = result["choices"][0]["message"]["content"].strip()
+                        print(f"DeepSeek API summary: {summary[:50]}...")
+                        return summary
+                    else:
+                        print(f"Unexpected DeepSeek API response format: {result}")
+                else:
+                    print(f"Error from DeepSeek API: {response.status_code}, {response.text}")
+            except requests.exceptions.RequestException as req_err:
+                print(f"Request error with DeepSeek API: {str(req_err)}")
+                
+            # If we reach here, there was an issue with the API call
+            print("DeepSeek API call failed, falling back to other methods")
+            return ""
+                
+        except Exception as e:
+            print(f"Error calling DeepSeek API: {str(e)}")
+            traceback.print_exc()
+            return ""
     
     def _summarize_with_sankuai(self, content: str) -> str:
         """
-        Summarize an article using Sankuai API with streaming response
+        Summarize an article using Sankuai API with streaming response (legacy method)
         """
         try:
             headers = {
@@ -105,9 +181,7 @@ class AIService:
                     return self._simple_summary(content)
             except requests.exceptions.RequestException as req_err:
                 print(f"Request error with Sankuai API: {str(req_err)}")
-                # For testing purposes, simulate a successful API response
-                print("Using simulated API response for testing")
-                return "这是一个关于Markdown CMS系统的测试文章，介绍了该系统可以自动扫描目录、基于分类组织内容、提供AI文章摘要和评论系统等功能。该系统为发布和管理markdown内容提供了简便的方式。"
+                return self._simple_summary(content)
                 
         except Exception as e:
             print(f"Error calling Sankuai API: {str(e)}")
