@@ -80,8 +80,6 @@ export const uploadFiles = async (
   files: File[],
   categories: Record<string, string>
 ): Promise<{ success: boolean; stats?: any; message?: string }> => {
-  const formData = new FormData();
-  
   // Ensure we have files to upload
   if (files.length === 0) {
     return { success: false, message: "未选择任何文件上传" };
@@ -90,9 +88,21 @@ export const uploadFiles = async (
   // Log the files being uploaded for debugging
   console.log(`Preparing to upload ${files.length} files`);
   
+  // Maximum file size for a single chunk (5MB)
+  const MAX_CHUNK_SIZE = 5 * 1024 * 1024;
+  
+  // Maximum number of retry attempts
+  const MAX_RETRIES = 3;
+  
+  // Timeout for uploads (increased to 120 seconds)
+  const UPLOAD_TIMEOUT = 120000;
+  
   // Count of successfully appended files
   let successfullyAppended = 0;
   let failedToAppend = 0;
+  
+  // Create a new FormData object
+  const formData = new FormData();
   
   // Append each file to the form data with their relative paths
   files.forEach(file => {
@@ -101,8 +111,18 @@ export const uploadFiles = async (
       // If webkitRelativePath is not available, use the filename
       const relativePath = file.webkitRelativePath || file.name;
       console.log(`Uploading file: ${relativePath}, type: ${file.type}, size: ${file.size} bytes`);
-      formData.append('files', file, relativePath);
-      successfullyAppended++;
+      
+      // For large files, we'll use chunked upload in the next step
+      // For now, just append to formData for small files
+      if (file.size <= MAX_CHUNK_SIZE) {
+        formData.append('files', file, relativePath);
+        successfullyAppended++;
+      } else {
+        // For large files, we'll handle them separately
+        // Just count them as successfully appended for now
+        formData.append('files', file, relativePath);
+        successfullyAppended++;
+      }
     } catch (err) {
       console.error(`Error appending file ${file.name} to form data:`, err);
       failedToAppend++;
@@ -127,73 +147,107 @@ export const uploadFiles = async (
   // Append categories as JSON string
   formData.append('categories', JSON.stringify(categories));
   
-  try {
-    // Show progress with longer timeout for larger uploads
-    const response = await api.post('/api/upload-files', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-      timeout: 60000, // Increase timeout to 60 seconds for larger uploads
-      onUploadProgress: (progressEvent) => {
-        if (progressEvent.total) {
-          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-          console.log(`Upload progress: ${percentCompleted}%`);
-          
-          // Dispatch custom event for progress updates
-          try {
-            window.dispatchEvent(new CustomEvent('upload-progress', { 
-              detail: { percent: percentCompleted } 
-            }));
-          } catch (err) {
-            console.error('Error dispatching progress event:', err);
+  // Function to upload with retry logic
+  const uploadWithRetry = async (retryCount = 0): Promise<any> => {
+    try {
+      // Show progress with longer timeout for larger uploads
+      const response = await api.post('/api/upload-files', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: UPLOAD_TIMEOUT,
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            console.log(`Upload progress: ${percentCompleted}%`);
+            
+            // Dispatch custom event for progress updates
+            try {
+              window.dispatchEvent(new CustomEvent('upload-progress', { 
+                detail: { percent: percentCompleted } 
+              }));
+            } catch (err) {
+              console.error('Error dispatching progress event:', err);
+            }
           }
         }
-      }
-    });
-    
-    // Validate response
-    if (!response.data) {
-      return { 
-        success: false, 
-        message: '服务器返回了空响应，请重试或联系管理员' 
-      };
-    }
-    
-    return response.data;
-  } catch (error: any) {
-    console.error('Error uploading files:', error);
-    
-    // Handle different error types
-    if (error.response) {
-      console.error('Response error data:', error.response.data);
-      // Handle specific HTTP status codes
-      if (error.response.status === 413) {
-        return {
-          success: false,
-          message: '上传文件过大，请尝试分批上传或减少文件数量'
+      });
+      
+      // Validate response
+      if (!response.data) {
+        return { 
+          success: false, 
+          message: '服务器返回了空响应，请重试或联系管理员' 
         };
       }
+      
+      return response.data;
+    } catch (error: any) {
+      console.error(`Error uploading files (attempt ${retryCount + 1}):`, error);
+      
+      // Handle different error types
+      if (error.response) {
+        console.error('Response error data:', error.response.data);
+        // Handle specific HTTP status codes
+        if (error.response.status === 413) {
+          return {
+            success: false,
+            message: '上传文件过大，请尝试分批上传或减少文件数量'
+          };
+        }
+        return { 
+          success: false, 
+          message: `上传失败: ${error.response.data?.detail || error.response.statusText || '服务器错误'}`
+        };
+      }
+      
+      // For timeout or network errors, retry if we haven't exceeded max retries
+      if ((error.code === 'ECONNABORTED' || 
+           (error.message && error.message.includes('Network Error'))) && 
+          retryCount < MAX_RETRIES) {
+        console.log(`Retrying upload (attempt ${retryCount + 1} of ${MAX_RETRIES})...`);
+        
+        // Wait before retrying (exponential backoff)
+        const delay = Math.pow(2, retryCount) * 1000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+        
+        // Dispatch retry event for UI feedback
+        window.dispatchEvent(new CustomEvent('upload-retry', { 
+          detail: { attempt: retryCount + 1, maxRetries: MAX_RETRIES } 
+        }));
+        
+        // Retry the upload
+        return uploadWithRetry(retryCount + 1);
+      }
+      
+      // If we've exhausted retries or it's another type of error
+      if (error.code === 'ECONNABORTED') {
+        return {
+          success: false,
+          message: '上传超时，请尝试上传较少的文件或检查网络连接'
+        };
+      }
+      
+      if (error.message && error.message.includes('Network Error')) {
+        console.error('Network connection error details:', error);
+        // Check if it's a CORS issue
+        if (error.message.includes('CORS') || error.message.includes('cross-origin')) {
+          return {
+            success: false,
+            message: '跨域请求错误，请确认API地址配置正确'
+          };
+        }
+        return {
+          success: false,
+          message: '网络连接错误，请检查您的网络连接并确认API地址配置正确'
+        };
+      }
+      
       return { 
         success: false, 
-        message: `上传失败: ${error.response.data?.detail || error.response.statusText || '服务器错误'}`
+        message: `上传失败: ${error.message || '未知错误'}`
       };
     }
-    
-    if (error.code === 'ECONNABORTED') {
-      return {
-        success: false,
-        message: '上传超时，请尝试上传较少的文件或检查网络连接'
-      };
-    }
-    
-    if (error.message && error.message.includes('Network Error')) {
-      return {
-        success: false,
-        message: '网络连接错误，请检查您的网络连接并重试'
-      };
-    }
-    
-    return { 
-      success: false, 
-      message: `上传失败: ${error.message || '未知错误'}`
-    };
-  }
+  };
+  
+  // Start the upload with retry logic
+  return await uploadWithRetry();
 };

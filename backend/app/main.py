@@ -167,18 +167,72 @@ async def upload_files(
     content_service: ContentService = Depends(get_content_service)
 ):
     """Upload files and import them as articles"""
+    import time
+    start_time = time.time()
+    
+    # Log upload request details
+    print(f"Received upload request with {len(files)} files")
+    print(f"First few filenames: {[f.filename for f in files[:5]]}")
+    
     try:
         # Parse categories JSON string
-        categories_dict = json.loads(categories)
+        try:
+            categories_dict = json.loads(categories)
+        except json.JSONDecodeError as json_err:
+            print(f"JSON decode error: {str(json_err)}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"无效的分类格式: {str(json_err)}"
+            )
+        
+        # Log categories mapping for debugging
+        category_count = len(categories_dict)
+        print(f"Categories mapping contains {category_count} entries")
+        if category_count > 0:
+            sample_entries = list(categories_dict.items())[:3]
+            print(f"Sample category mappings: {sample_entries}")
+        
+        # Process the upload with improved error handling
         result = await content_service.import_from_uploads(files, categories_dict)
+        
+        # Log completion time
+        elapsed_time = time.time() - start_time
+        print(f"Upload processing completed in {elapsed_time:.2f} seconds")
+        
         if not result["success"]:
+            print(f"Upload failed: {result['message']}")
             raise HTTPException(status_code=400, detail=result["message"])
+        
+        # Log success statistics
+        print(f"Upload successful: {result.get('stats', {})}")
         return result
+    except HTTPException:
+        # Re-raise HTTP exceptions without modification
+        raise
     except Exception as e:
         import traceback
         error_details = traceback.format_exc()
         print(f"Upload error: {error_details}")
-        raise HTTPException(status_code=500, detail=str(e))
+        
+        # Provide more specific error messages based on exception type
+        if "ConnectionError" in str(e) or "Timeout" in str(e):
+            raise HTTPException(
+                status_code=503, 
+                detail="网络连接问题，请稍后重试"
+            )
+        elif "PermissionError" in str(e):
+            raise HTTPException(
+                status_code=500, 
+                detail="服务器权限错误，请联系管理员"
+            )
+        elif "MemoryError" in str(e) or "OutOfMemory" in str(e):
+            raise HTTPException(
+                status_code=503, 
+                detail="服务器内存不足，请尝试分批上传或减少文件数量"
+            )
+        else:
+            # Generic error with full details
+            raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/debug/config", include_in_schema=False)
 async def debug_config():
@@ -197,4 +251,17 @@ async def debug_config():
             "COMMENTS_FILE": settings.COMMENTS_FILE,
             "SUMMARIES_FILE": settings.SUMMARIES_FILE,
         }
+    }
+
+@app.get("/api/debug/connectivity", include_in_schema=False)
+async def debug_connectivity():
+    """Debug endpoint to check API connectivity"""
+    import os
+    from datetime import datetime
+    
+    return {
+        "status": "ok",
+        "api_version": "1.0.0",
+        "environment": os.environ.get("ENVIRONMENT", "production"),
+        "timestamp": datetime.now().isoformat()
     }

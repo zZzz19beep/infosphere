@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Folder, Upload } from 'lucide-react';
 import { uploadFiles } from '../api';
+import axios from 'axios';
 import {
   Dialog,
   DialogContent,
@@ -22,6 +23,9 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isOpen, setIsOpen] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+  const [maxRetries, setMaxRetries] = useState(3);
+  const [uploadProgress, setUploadProgress] = useState(0);
   
   // Reset states when dialog opens
   useEffect(() => {
@@ -32,6 +36,8 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
       setSelectedFiles([]);
       setCategories({});
       setDirectoryPath('');
+      setRetryCount(0);
+      setUploadProgress(0);
     }
   }, [isOpen]);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -44,6 +50,39 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
   
   // We'll use this ref to access the file input element
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Function to check backend connectivity before attempting upload
+  const checkBackendConnectivity = useCallback(async () => {
+    try {
+      const API_URL = import.meta.env.VITE_API_URL;
+      await axios.get(`${API_URL}/healthz`);
+      return true;
+    } catch (error) {
+      console.error('Backend connectivity check failed:', error);
+      return false;
+    }
+  }, []);
+
+  // Listen for upload progress events
+  useEffect(() => {
+    const handleUploadProgress = (event: CustomEvent) => {
+      setUploadProgress(event.detail.percent);
+    };
+    
+    const handleUploadRetry = (event: CustomEvent) => {
+      setRetryCount(event.detail.attempt);
+      setMaxRetries(event.detail.maxRetries);
+      setError(`网络连接问题，正在重试... (${event.detail.attempt}/${event.detail.maxRetries})`);
+    };
+    
+    window.addEventListener('upload-progress', handleUploadProgress as EventListener);
+    window.addEventListener('upload-retry', handleUploadRetry as EventListener);
+    
+    return () => {
+      window.removeEventListener('upload-progress', handleUploadProgress as EventListener);
+      window.removeEventListener('upload-retry', handleUploadRetry as EventListener);
+    };
+  }, []);
 
   // Detect browser capabilities on component mount
   useEffect(() => {
@@ -297,6 +336,16 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
     setIsImporting(true);
     setError(null);
     setSuccess(null);
+    setUploadProgress(0);
+    setRetryCount(0);
+    
+    // Check backend connectivity before attempting upload
+    const isConnected = await checkBackendConnectivity();
+    if (!isConnected) {
+      setError('无法连接到服务器，请检查您的网络连接或联系管理员');
+      setIsImporting(false);
+      return;
+    }
 
     try {
       console.log(`Uploading ${selectedFiles.length} files with categories:`, categories);
@@ -375,6 +424,27 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
                 </div>
               )}
             </div>
+            
+            {/* Upload Progress Bar */}
+            {isImporting && (
+              <div className="mt-4">
+                <div className="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+                  <div 
+                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+                    style={{ width: `${uploadProgress}%` }}
+                  ></div>
+                </div>
+                <div className="flex justify-between text-xs text-gray-600">
+                  <span>上传进度: {uploadProgress}%</span>
+                  {retryCount > 0 && (
+                    <span className="text-amber-600">
+                      重试 {retryCount}/{maxRetries}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+            
             {success && <p className="text-sm text-green-600">{success}</p>}
             {error && <p className="text-sm text-red-500">{error}</p>}
             {isProcessing && <p className="text-sm text-blue-500">正在处理目录，请稍候...</p>}
