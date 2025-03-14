@@ -200,7 +200,11 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
       }
     } catch (err) {
       console.error('Error importing directory:', err);
-      setError('导入目录时发生错误');
+      if (err instanceof Error) {
+        setError(`导入目录时发生错误: ${err.message}`);
+      } else {
+        setError('导入目录时发生未知错误');
+      }
     } finally {
       setIsImporting(false);
     }

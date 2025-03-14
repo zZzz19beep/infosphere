@@ -116,3 +116,22 @@ async def import_directory(
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/debug/config", include_in_schema=False)
+async def debug_config():
+    """Debug endpoint to check configuration"""
+    import os
+    from app.config import settings
+    
+    return {
+        "env_vars": {
+            "CONTENT_DIR": os.environ.get("CONTENT_DIR", "Not set"),
+            "COMMENTS_FILE": os.environ.get("COMMENTS_FILE", "Not set"),
+            "SUMMARIES_FILE": os.environ.get("SUMMARIES_FILE", "Not set"),
+        },
+        "settings": {
+            "CONTENT_DIR": settings.CONTENT_DIR,
+            "COMMENTS_FILE": settings.COMMENTS_FILE,
+            "SUMMARIES_FILE": settings.SUMMARIES_FILE,
+        }
+    }

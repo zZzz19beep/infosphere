@@ -214,29 +214,42 @@ class ContentService:
         import os
         from pathlib import Path
         
-        source_dir = Path(directory_path)
-        if not source_dir.exists() or not source_dir.is_dir():
-            return {"success": False, "message": "Directory not found"}
-        
-        # Track import statistics
-        stats = {"categories": 0, "articles": 0}
-        
-        # Process each subdirectory as a category
-        for item in os.listdir(source_dir):
-            item_path = source_dir / item
-            if item_path.is_dir():
-                # Create category directory if it doesn't exist
-                category_dir = self.content_dir / item
-                if not category_dir.exists():
-                    category_dir.mkdir(parents=True, exist_ok=True)
-                    stats["categories"] += 1
+        try:
+            source_dir = Path(directory_path)
+            if not source_dir.exists() or not source_dir.is_dir():
+                return {"success": False, "message": f"目录未找到: {directory_path}"}
+            
+            # Ensure content directory exists
+            if not self.content_dir.exists():
+                try:
+                    self.content_dir.mkdir(parents=True, exist_ok=True)
+                except Exception as e:
+                    return {"success": False, "message": f"无法创建内容目录: {str(e)}"}
+            
+            # Track import statistics
+            stats = {"categories": 0, "articles": 0}
+            
+            # Process each subdirectory as a category
+            for item in os.listdir(source_dir):
+                item_path = source_dir / item
+                if item_path.is_dir():
+                    # Create category directory if it doesn't exist
+                    category_dir = self.content_dir / item
+                    if not category_dir.exists():
+                        category_dir.mkdir(parents=True, exist_ok=True)
+                        stats["categories"] += 1
+                    
+                    # Copy markdown files to category directory
+                    for file in os.listdir(item_path):
+                        if file.endswith('.md'):
+                            source_file = item_path / file
+                            target_file = category_dir / file
+                            shutil.copy2(source_file, target_file)
+                            stats["articles"] += 1
+            
+            if stats["articles"] == 0:
+                return {"success": False, "message": f"在 {directory_path} 中未找到任何 Markdown 文件"}
                 
-                # Copy markdown files to category directory
-                for file in os.listdir(item_path):
-                    if file.endswith('.md'):
-                        source_file = item_path / file
-                        target_file = category_dir / file
-                        shutil.copy2(source_file, target_file)
-                        stats["articles"] += 1
-        
-        return {"success": True, "stats": stats}
+            return {"success": True, "stats": stats}
+        except Exception as e:
+            return {"success": False, "message": f"导入目录时发生错误: {str(e)}"}
