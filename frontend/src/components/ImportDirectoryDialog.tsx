@@ -86,25 +86,43 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
           // Get file count to provide better feedback
           let fileCount = 0;
           let mdFiles = [];
-          try {
-            // @ts-ignore - TypeScript doesn't recognize directory handle methods
-            for await (const entry of directoryHandle.values()) {
-              if (entry.kind === 'file' && entry.name.endsWith('.md')) {
-                fileCount++;
-                mdFiles.push(entry.name);
+          let categoriesSet = new Set<string>();
+          
+          // Recursive function to process directories
+          const processDirectory = async (dirHandle: any, relativePath = '') => {
+            try {
+              // @ts-ignore - TypeScript doesn't recognize directory handle methods
+              for await (const entry of dirHandle.values()) {
+                if (entry.kind === 'file' && entry.name.endsWith('.md')) {
+                  fileCount++;
+                  const fullPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+                  mdFiles.push({ name: entry.name, path: fullPath });
+                } else if (entry.kind === 'directory') {
+                  // Add to categories if it's a direct subdirectory
+                  if (!relativePath) {
+                    categoriesSet.add(entry.name);
+                  }
+                  // Process subdirectory recursively
+                  const newPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+                  // @ts-ignore
+                  await processDirectory(entry, newPath);
+                }
               }
+            } catch (err) {
+              console.warn(`Error processing directory ${relativePath}:`, err);
             }
-          } catch (countErr) {
-            console.warn('Could not count files in directory:', countErr);
-          }
+          };
+          
+          // Start recursive processing
+          await processDirectory(directoryHandle);
           
           setDirectoryPath(path);
           setError(null);
-          console.log(`Selected directory using File System Access API: ${path} with ${fileCount} markdown files`);
+          console.log(`Selected directory using File System Access API: ${path} with ${fileCount} markdown files in ${categoriesSet.size} categories`);
           
           // Show success feedback
           if (fileCount > 0) {
-            setError(`找到 ${fileCount} 个 Markdown 文件在 "${path}" 目录中。点击"导入"按钮继续。`);
+            setError(`找到 ${fileCount} 个 Markdown 文件在 "${path}" 目录中的 ${categoriesSet.size} 个分类下。点击"导入"按钮继续。`);
           } else {
             setError(`已选择 "${path}" 目录。未找到 Markdown 文件，您仍可以尝试导入。`);
           }
@@ -165,6 +183,9 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
         
         // Create categories mapping
         const categoriesMap: Record<string, string> = {};
+        // Track unique categories
+        const categoriesSet = new Set<string>();
+        
         markdownFiles.forEach(file => {
           // Extract category from relative path
           const relativePath = file.webkitRelativePath;
@@ -174,16 +195,18 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
           let category = 'default';
           if (pathParts.length > 2) {
             category = pathParts[1]; // First subdirectory after root
+            categoriesSet.add(category);
           }
           
-          categoriesMap[file.name] = category;
+          // Use the full relative path as the key instead of just the filename
+          categoriesMap[relativePath] = category;
         });
         
         setCategories(categoriesMap);
         
         // Show success feedback
         if (markdownFiles.length > 0) {
-          setError(`找到 ${markdownFiles.length} 个 Markdown 文件在 "${path}" 目录中。点击"导入"按钮继续。`);
+          setError(`找到 ${markdownFiles.length} 个 Markdown 文件在 "${path}" 目录中的 ${categoriesSet.size} 个分类下。点击"导入"按钮继续。`);
           
           // Automatically trigger import if files were found
           setTimeout(() => {
@@ -247,7 +270,7 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
         <DialogHeader>
           <DialogTitle>导入文章</DialogTitle>
           <DialogDescription>
-            选择一个本地目录导入文章。子文件夹将作为文章分类，Markdown文件将作为文章导入。
+            选择一个本地目录导入文章。目录中的子文件夹将作为文章分类，子文件夹内的Markdown文件将作为该分类下的文章导入。
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 py-4">

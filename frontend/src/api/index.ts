@@ -79,9 +79,11 @@ export const uploadFiles = async (
 ): Promise<{ success: boolean; stats?: any; message?: string }> => {
   const formData = new FormData();
   
-  // Append each file to the form data
+  // Append each file to the form data with their relative paths
   files.forEach(file => {
-    formData.append('files', file);
+    // Use the webkitRelativePath as the filename to preserve directory structure
+    const blob = new Blob([file], { type: file.type });
+    formData.append('files', blob, file.webkitRelativePath);
   });
   
   // Append categories as JSON string
