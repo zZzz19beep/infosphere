@@ -190,12 +190,15 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
     setError(null);
 
     try {
+      console.log(`Importing directory: ${directoryPath}`);
       const result = await importDirectory(directoryPath);
       
       if (result.success) {
+        console.log(`Import successful: ${JSON.stringify(result.stats)}`);
         setIsOpen(false);
         onImportComplete();
       } else {
+        console.error(`Import failed: ${result.message}`);
         setError(result.message || '导入目录失败');
       }
     } catch (err) {

@@ -4,7 +4,7 @@ import os
 
 class Settings(BaseSettings):
     # Path to the content directory containing markdown files
-    CONTENT_DIR: str = os.environ.get("CONTENT_DIR", "/home/ubuntu/markdown-cms/sample-content")
+    CONTENT_DIR: str = os.environ.get("CONTENT_DIR", "/app/sample-content")
     
     # AI API settings
     OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
@@ -13,13 +13,14 @@ class Settings(BaseSettings):
     SANKUAI_API_MODEL: str = os.environ.get("SANKUAI_API_MODEL", "deepseek-v3-friday")
     
     # Path to store comments data
-    COMMENTS_FILE: str = os.environ.get("COMMENTS_FILE", "/home/ubuntu/markdown-cms/backend/data/comments.json")
+    COMMENTS_FILE: str = os.environ.get("COMMENTS_FILE", "/app/data/comments.json")
     
     # Path to store article summaries
-    SUMMARIES_FILE: str = os.environ.get("SUMMARIES_FILE", "/home/ubuntu/markdown-cms/backend/data/summaries.json")
+    SUMMARIES_FILE: str = os.environ.get("SUMMARIES_FILE", "/app/data/summaries.json")
 
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        env_prefix = ""
 
 settings = Settings()

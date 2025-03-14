@@ -16,6 +16,10 @@ class ContentService:
         self.comments_file = Path(settings.COMMENTS_FILE)
         self.summaries_file = Path(settings.SUMMARIES_FILE)
         
+        # Create content directory if it doesn't exist
+        if not self.content_dir.exists():
+            self.content_dir.mkdir(parents=True, exist_ok=True)
+        
         # Create data files if they don't exist
         self._ensure_data_files()
     
@@ -213,43 +217,93 @@ class ContentService:
         import shutil
         import os
         from pathlib import Path
+        import traceback
         
         try:
+            print(f"Attempting to import from directory: {directory_path}")
+            print(f"Content directory: {self.content_dir}")
+            
             source_dir = Path(directory_path)
             if not source_dir.exists() or not source_dir.is_dir():
+                print(f"Directory not found: {directory_path}")
                 return {"success": False, "message": f"目录未找到: {directory_path}"}
             
             # Ensure content directory exists
             if not self.content_dir.exists():
                 try:
+                    print(f"Creating content directory: {self.content_dir}")
                     self.content_dir.mkdir(parents=True, exist_ok=True)
                 except Exception as e:
+                    print(f"Error creating content directory: {str(e)}")
                     return {"success": False, "message": f"无法创建内容目录: {str(e)}"}
             
             # Track import statistics
             stats = {"categories": 0, "articles": 0}
             
-            # Process each subdirectory as a category
-            for item in os.listdir(source_dir):
-                item_path = source_dir / item
-                if item_path.is_dir():
-                    # Create category directory if it doesn't exist
-                    category_dir = self.content_dir / item
-                    if not category_dir.exists():
-                        category_dir.mkdir(parents=True, exist_ok=True)
-                        stats["categories"] += 1
+            # Process directory structure recursively
+            def process_directory(src_dir, relative_path=None):
+                nonlocal stats
+                
+                # If this is a nested call, build the relative path
+                current_rel_path = relative_path or ""
+                
+                print(f"Processing directory: {src_dir}, relative path: {current_rel_path}")
+                
+                # Process each item in the directory
+                for item in os.listdir(src_dir):
+                    item_path = src_dir / item
                     
-                    # Copy markdown files to category directory
-                    for file in os.listdir(item_path):
-                        if file.endswith('.md'):
-                            source_file = item_path / file
-                            target_file = category_dir / file
-                            shutil.copy2(source_file, target_file)
-                            stats["articles"] += 1
+                    # Handle directories (categories)
+                    if item_path.is_dir():
+                        # For top-level directories, use the directory name as category
+                        if not relative_path:
+                            category_name = item
+                            category_dir = self.content_dir / category_name
+                            if not category_dir.exists():
+                                print(f"Creating category directory: {category_dir}")
+                                category_dir.mkdir(parents=True, exist_ok=True)
+                                stats["categories"] += 1
+                            
+                            # Process this category directory recursively
+                            process_directory(item_path, category_name)
+                        else:
+                            # For nested directories, create nested structure under the category
+                            nested_dir_path = self.content_dir / current_rel_path / item
+                            if not nested_dir_path.exists():
+                                print(f"Creating nested directory: {nested_dir_path}")
+                                nested_dir_path.mkdir(parents=True, exist_ok=True)
+                            
+                            # Process this nested directory recursively
+                            new_rel_path = f"{current_rel_path}/{item}" if current_rel_path else item
+                            process_directory(item_path, new_rel_path)
+                    
+                    # Handle markdown files
+                    elif item.endswith('.md'):
+                        # Copy markdown file to the appropriate category directory
+                        target_dir = self.content_dir
+                        if current_rel_path:
+                            target_dir = self.content_dir / current_rel_path
+                            
+                        if not target_dir.exists():
+                            print(f"Creating target directory: {target_dir}")
+                            target_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        source_file = item_path
+                        target_file = target_dir / item
+                        print(f"Copying file: {source_file} -> {target_file}")
+                        shutil.copy2(source_file, target_file)
+                        stats["articles"] += 1
+            
+            # Start recursive processing from the source directory
+            process_directory(source_dir)
             
             if stats["articles"] == 0:
+                print(f"No markdown files found in: {directory_path}")
                 return {"success": False, "message": f"在 {directory_path} 中未找到任何 Markdown 文件"}
                 
+            print(f"Import successful: {stats}")
             return {"success": True, "stats": stats}
         except Exception as e:
+            error_details = traceback.format_exc()
+            print(f"Import error: {error_details}")
             return {"success": False, "message": f"导入目录时发生错误: {str(e)}"}
