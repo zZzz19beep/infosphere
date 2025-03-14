@@ -1,6 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Folder, Upload } from 'lucide-react';
 import { uploadFiles } from '../api';
+import axios from 'axios';
 import {
   Dialog,
   DialogContent,
@@ -49,6 +50,18 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
   
   // We'll use this ref to access the file input element
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Function to check backend connectivity before attempting upload
+  const checkBackendConnectivity = useCallback(async () => {
+    try {
+      const API_URL = import.meta.env.VITE_API_URL;
+      await axios.get(`${API_URL}/healthz`);
+      return true;
+    } catch (error) {
+      console.error('Backend connectivity check failed:', error);
+      return false;
+    }
+  }, []);
 
   // Listen for upload progress events
   useEffect(() => {
@@ -325,6 +338,14 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
     setSuccess(null);
     setUploadProgress(0);
     setRetryCount(0);
+    
+    // Check backend connectivity before attempting upload
+    const isConnected = await checkBackendConnectivity();
+    if (!isConnected) {
+      setError('无法连接到服务器，请检查您的网络连接或联系管理员');
+      setIsImporting(false);
+      return;
+    }
 
     try {
       console.log(`Uploading ${selectedFiles.length} files with categories:`, categories);

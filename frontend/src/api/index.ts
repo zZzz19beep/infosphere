@@ -227,9 +227,17 @@ export const uploadFiles = async (
       }
       
       if (error.message && error.message.includes('Network Error')) {
+        console.error('Network connection error details:', error);
+        // Check if it's a CORS issue
+        if (error.message.includes('CORS') || error.message.includes('cross-origin')) {
+          return {
+            success: false,
+            message: '跨域请求错误，请确认API地址配置正确'
+          };
+        }
         return {
           success: false,
-          message: '网络连接错误，请检查您的网络连接并重试'
+          message: '网络连接错误，请检查您的网络连接并确认API地址配置正确'
         };
       }
       

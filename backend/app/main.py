@@ -252,3 +252,16 @@ async def debug_config():
             "SUMMARIES_FILE": settings.SUMMARIES_FILE,
         }
     }
+
+@app.get("/api/debug/connectivity", include_in_schema=False)
+async def debug_connectivity():
+    """Debug endpoint to check API connectivity"""
+    import os
+    from datetime import datetime
+    
+    return {
+        "status": "ok",
+        "api_version": "1.0.0",
+        "environment": os.environ.get("ENVIRONMENT", "production"),
+        "timestamp": datetime.now().isoformat()
+    }
