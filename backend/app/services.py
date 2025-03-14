@@ -40,18 +40,49 @@ class ContentService:
         """Get all categories from the content directory"""
         categories = []
         
-        # List all directories in the content directory
-        for item in os.listdir(self.content_dir):
-            item_path = self.content_dir / item
-            if item_path.is_dir():
-                category_id = item
-                categories.append(
-                    Category(
-                        id=category_id,
-                        name=item,
-                        path=str(item_path)
-                    )
-                )
+        # Process function to handle nested directories
+        def process_directory(dir_path, parent_id=None):
+            result = []
+            
+            # List all directories in the current directory
+            for item in os.listdir(dir_path):
+                item_path = dir_path / item
+                if item_path.is_dir():
+                    # Skip hidden directories
+                    if item.startswith('.'):
+                        continue
+                    
+                    # Check if this directory contains markdown files or subdirectories
+                    has_content = False
+                    
+                    # Check for markdown files directly in this directory
+                    for file in os.listdir(item_path):
+                        if file.endswith('.md') or os.path.isdir(item_path / file):
+                            has_content = True
+                            break
+                    
+                    if has_content:
+                        # Create category ID based on parent
+                        category_id = item if parent_id is None else f"{parent_id}/{item}"
+                        
+                        # Add this category
+                        result.append(
+                            Category(
+                                id=category_id,
+                                name=item,
+                                path=str(item_path)
+                            )
+                        )
+                        
+                        # Process subdirectories recursively
+                        # Note: We're not adding subcategories to the result here
+                        # as we want a flat list of all categories
+                        result.extend(process_directory(item_path, category_id))
+            
+            return result
+        
+        # Start processing from the content directory
+        categories = process_directory(self.content_dir)
         
         return categories
     
@@ -67,43 +98,72 @@ class ContentService:
         comments = self._load_comments()
         summaries = self._load_summaries()
         
-        # List all markdown files in the category directory
-        for item in os.listdir(category_path):
-            if item.endswith('.md'):
-                file_path = category_path / item
-                article_id = f"{category_id}/{item}"
+        # Process this directory and its subdirectories
+        def process_directory(dir_path, current_category):
+            result = []
+            
+            # List all items in the directory
+            for item in os.listdir(dir_path):
+                item_path = dir_path / item
                 
-                # Get article title from the first line of the file
-                with open(file_path, 'r') as f:
-                    content = f.read()
-                    title = content.splitlines()[0].lstrip('#').strip()
-                
-                # Get comment count
-                comment_count = len(comments.get(article_id, []))
-                
-                # Get summary if available
-                summary = summaries.get(article_id, {}).get('summary', None)
-                
-                articles.append(
-                    ArticleSummary(
-                        id=article_id,
-                        title=title,
-                        category_id=category_id,
-                        summary=summary,
-                        comment_count=comment_count,
-                        path=str(file_path)
+                # Process markdown files
+                if item.endswith('.md'):
+                    file_path = item_path
+                    article_id = f"{current_category}/{item}"
+                    
+                    # Get article title from the first line of the file
+                    try:
+                        with open(file_path, 'r') as f:
+                            content = f.read()
+                            title = content.splitlines()[0].lstrip('#').strip() if content else item
+                    except Exception:
+                        # Fallback to filename if can't read content
+                        title = item.replace('.md', '')
+                    
+                    # Get comment count
+                    comment_count = len(comments.get(article_id, []))
+                    
+                    # Get summary if available
+                    summary = summaries.get(article_id, {}).get('summary', None)
+                    
+                    result.append(
+                        ArticleSummary(
+                            id=article_id,
+                            title=title,
+                            category_id=current_category,
+                            summary=summary,
+                            comment_count=comment_count,
+                            path=str(file_path)
+                        )
                     )
-                )
+                
+                # Process subdirectories
+                elif item_path.is_dir():
+                    # Skip hidden directories
+                    if item.startswith('.'):
+                        continue
+                    
+                    # Process subdirectory
+                    sub_category = f"{current_category}/{item}"
+                    result.extend(process_directory(item_path, sub_category))
+            
+            return result
+        
+        # Start processing from the category directory
+        articles = process_directory(category_path, category_id)
         
         return articles
     
     def get_article(self, article_id: str) -> Optional[Article]:
         """Get a single article by ID"""
-        parts = article_id.split('/', 1)
+        # Split the article_id into category path and filename
+        parts = article_id.rsplit('/', 1)
         if len(parts) != 2:
             return None
         
         category_id, filename = parts
+        
+        # Build the file path by joining the content directory with the category path and filename
         file_path = self.content_dir / category_id / filename
         
         if not file_path.exists() or not file_path.is_file():
@@ -118,7 +178,7 @@ class ContentService:
             content = f.read()
             
         # Extract title from the first line
-        title = content.splitlines()[0].lstrip('#').strip()
+        title = content.splitlines()[0].lstrip('#').strip() if content else filename
         
         # Get comment count
         comment_count = len(comments.get(article_id, []))
@@ -238,69 +298,57 @@ class ContentService:
                     return {"success": False, "message": f"无法创建内容目录: {str(e)}"}
             
             # Track import statistics
-            stats = {"categories": 0, "articles": 0}
+            stats = {"categories": 0, "articles": 0, "categories_created": []}
+            created_categories = set()
             
-            # Process directory structure recursively
-            def process_directory(src_dir, relative_path=None):
-                nonlocal stats
-                
-                # If this is a nested call, build the relative path
-                current_rel_path = relative_path or ""
-                
-                print(f"Processing directory: {src_dir}, relative path: {current_rel_path}")
-                
-                # Process each item in the directory
-                for item in os.listdir(src_dir):
-                    item_path = src_dir / item
-                    
-                    # Handle directories (categories)
-                    if item_path.is_dir():
-                        # For top-level directories, use the directory name as category
-                        if not relative_path:
-                            category_name = item
-                            category_dir = self.content_dir / category_name
-                            if not category_dir.exists():
-                                print(f"Creating category directory: {category_dir}")
-                                category_dir.mkdir(parents=True, exist_ok=True)
-                                stats["categories"] += 1
-                            
-                            # Process this category directory recursively
-                            process_directory(item_path, category_name)
-                        else:
-                            # For nested directories, create nested structure under the category
-                            nested_dir_path = self.content_dir / current_rel_path / item
-                            if not nested_dir_path.exists():
-                                print(f"Creating nested directory: {nested_dir_path}")
-                                nested_dir_path.mkdir(parents=True, exist_ok=True)
-                            
-                            # Process this nested directory recursively
-                            new_rel_path = f"{current_rel_path}/{item}" if current_rel_path else item
-                            process_directory(item_path, new_rel_path)
-                    
-                    # Handle markdown files
-                    elif item.endswith('.md'):
-                        # Copy markdown file to the appropriate category directory
-                        target_dir = self.content_dir
-                        if current_rel_path:
-                            target_dir = self.content_dir / current_rel_path
-                            
-                        if not target_dir.exists():
-                            print(f"Creating target directory: {target_dir}")
-                            target_dir.mkdir(parents=True, exist_ok=True)
-                        
-                        source_file = item_path
-                        target_file = target_dir / item
-                        print(f"Copying file: {source_file} -> {target_file}")
-                        shutil.copy2(source_file, target_file)
-                        stats["articles"] += 1
+            # Find all markdown files in the directory structure
+            md_files = []
+            for root, _, files in os.walk(source_dir):
+                for file in files:
+                    if file.endswith('.md'):
+                        rel_path = os.path.relpath(root, source_dir)
+                        md_files.append((os.path.join(root, file), rel_path))
             
-            # Start recursive processing from the source directory
-            process_directory(source_dir)
-            
-            if stats["articles"] == 0:
+            if not md_files:
                 print(f"No markdown files found in: {directory_path}")
                 return {"success": False, "message": f"在 {directory_path} 中未找到任何 Markdown 文件"}
-                
+            
+            print(f"Found {len(md_files)} markdown files")
+            
+            # Process each markdown file
+            for file_path, rel_path in md_files:
+                try:
+                    # Determine category from relative path
+                    if rel_path == '.':
+                        # Files in the root directory - use parent folder name as category
+                        category = os.path.basename(source_dir)
+                    else:
+                        # Use the relative path as the category
+                        category = rel_path
+                    
+                    # Create category directory if it doesn't exist
+                    category_dir = self.content_dir / category
+                    if not category_dir.exists():
+                        print(f"Creating category directory: {category_dir}")
+                        category_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        # Track top-level category creation
+                        top_level_category = category.split('/')[0]
+                        if top_level_category not in created_categories:
+                            stats["categories"] += 1
+                            created_categories.add(top_level_category)
+                            stats["categories_created"].append(top_level_category)
+                    
+                    # Copy the file to the category directory
+                    filename = os.path.basename(file_path)
+                    target_file = category_dir / filename
+                    print(f"Copying file: {file_path} -> {target_file}")
+                    shutil.copy2(file_path, target_file)
+                    stats["articles"] += 1
+                except Exception as e:
+                    print(f"Error processing file {file_path}: {str(e)}")
+                    # Continue with other files even if one fails
+            
             print(f"Import successful: {stats}")
             return {"success": True, "stats": stats}
         except Exception as e:

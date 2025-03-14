@@ -253,14 +253,16 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
           const relativePath = file.webkitRelativePath;
           const pathParts = relativePath.split('/');
           
-          // If file is in a subdirectory, use that as category
+          // If file is in a subdirectory, use the full path except the filename and root dir
           let category = 'default';
           if (pathParts.length > 2) {
-            category = pathParts[1]; // First subdirectory after root
+            // Skip the root directory (pathParts[0]) and the filename (last part)
+            // Use all intermediate directories as the category path
+            category = pathParts.slice(1, -1).join('/');
             categoriesSet.add(category);
           }
           
-          // Use the full relative path as the key instead of just the filename
+          // Use the full relative path as the key
           categoriesMap[relativePath] = category;
         });
         
@@ -270,9 +272,6 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
         if (markdownFiles.length > 0) {
           setSuccess(`找到 ${markdownFiles.length} 个 Markdown 文件在 "${path}" 目录中的 ${categoriesSet.size} 个分类下。点击"导入"按钮继续。`);
           setError(null);
-          
-          // Don't automatically trigger import - let the user click the button
-          // This gives them time to see what was found and decide whether to proceed
         } else {
           setSuccess(`已选择 "${path}" 目录。未找到 Markdown 文件，您仍可以尝试导入。`);
           setError(null);
@@ -280,9 +279,7 @@ const ImportDirectoryDialog: React.FC<ImportDirectoryDialogProps> = ({ onImportC
       } catch (err) {
         console.error('Error processing selected files:', err);
         setError('处理选择的文件失败。请重试。');
-        // Set processing state to false when done
         setIsProcessing(false);
-
       }
     } else {
       // User cancelled the selection

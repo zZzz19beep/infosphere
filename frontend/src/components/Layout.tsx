@@ -83,9 +83,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         if (isUsingWebkitDirectory) {
           // For webkitdirectory, use the directory structure as category path
           const pathParts = relativePath.split('/');
-          if (pathParts.length > 1) {
-            // Use all directories except the last part (which is the filename)
-            category = pathParts.slice(0, -1).join('/');
+          if (pathParts.length > 2) {
+            // Skip the root directory (pathParts[0]) and the filename (last part)
+            // Use all intermediate directories as the category path
+            category = pathParts.slice(1, -1).join('/');
           }
         } else {
           // For regular file input, try to extract category from file path

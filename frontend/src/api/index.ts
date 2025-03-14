@@ -10,6 +10,9 @@ export interface Category {
   id: string;
   name: string;
   path: string;
+  // Add a helper property to determine if this is a nested category
+  isNested?: boolean;
+  parentId?: string;
 }
 
 export interface ArticleSummary {
